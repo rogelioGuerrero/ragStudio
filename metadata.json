@@ -1,0 +1,6 @@
+{
+  "name": "Gemini RAG Studio",
+  "description": "Interactive RAG web application for building, evaluating, and testing multimodal embeddings and vector search with Google Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
