@@ -58,21 +58,34 @@ export default function PlaygroundModule() {
       let queryEmbedding: number[] = [];
       const usedModel = exportData.metadata.model || 'gemini-embedding-2-preview';
       
+      addLog(`Generando embedding para consulta usando: ${usedModel}`);
+      
       if (usedModel === 'gemini-embedding-2-preview') {
         const embedRes = await withExponentialBackoff(
           () => ai.models.embedContent({
             model: 'gemini-embedding-2-preview',
-            contents: queryStr,
+            contents: [{ parts: [{ text: queryStr }] }],
           }),
           4,
           addLog
         );
-        queryEmbedding = embedRes.embeddings?.[0]?.values || [];
+        // Handle both possible structures (embedding or embeddings[0])
+        queryEmbedding = embedRes.embedding?.values || embedRes.embeddings?.[0]?.values || [];
       } else {
-        queryEmbedding = await generateLocalEmbedding(queryStr, usedModel);
+        queryEmbedding = await generateLocalEmbedding(queryStr, usedModel, (info: any) => {
+          if (info.status === 'initiate') addLog(`[Sistema] Cargando modelo local para consulta: ${info.file}`);
+          if (info.status === 'done') addLog(`[Sistema] Modelo local listo: ${info.file}`);
+        });
       }
 
-      if (!queryEmbedding || queryEmbedding.length === 0) throw new Error("Failed to generate embedding for query.");
+      if (!queryEmbedding || queryEmbedding.length === 0) throw new Error("No se pudo generar el embedding para la consulta.");
+      
+      const chunkDim = exportData.data[0]?.embedding.length || 0;
+      addLog(`[Check] Dimensiones: Consulta=${queryEmbedding.length}, Base=${chunkDim}`);
+      
+      if (chunkDim > 0 && queryEmbedding.length !== chunkDim) {
+        throw new Error(`Discrepancia de dimensiones: El modelo de la base (${chunkDim}) no coincide con el modelo de consulta (${queryEmbedding.length}). ¿Cambiaste el modelo sin re-procesar?`);
+      }
 
       // 2. Map Cosine Similarity
       const topK = searchVectors(queryEmbedding, exportData.data, 3);
@@ -100,13 +113,12 @@ ${contextText}
         content: '',
         sources: sourcesUsed
       }]);
-      setIsTyping(false);
 
       let responseText = "";
       try {
         const result = await withExponentialBackoff(
           () => ai.models.generateContentStream({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3-flash-preview',
             contents: [
               { role: 'user', parts: [{ text: systemPrompt + `\n\nUser Question: ${queryStr}` }] }
             ],
@@ -115,8 +127,10 @@ ${contextText}
           addLog
         );
 
-        for await (const chunk of result.stream) {
-          const chunkText = chunk.text();
+        setIsTyping(false); // Stop showing bubbles once stream starts
+
+        for await (const chunk of result) {
+          const chunkText = chunk.text || "";
           responseText += chunkText;
           setMessages(prev => prev.map(msg => 
             msg.id === assistantId ? { ...msg, content: responseText } : msg
@@ -137,7 +151,8 @@ ${contextText}
         timestamp: new Date().toISOString(),
         retrievedCount: topK.length,
         averageSimilarity: avgSimilarity,
-        llmResponseTimeMs
+        llmResponseTimeMs,
+        retrievedIds: topK.map(t => t.chunk.id)
       });
 
       const rtt = Date.now() - startTime;

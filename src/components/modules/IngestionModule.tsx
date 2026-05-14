@@ -16,6 +16,7 @@ export default function IngestionModule() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [embeddingModel, setEmbeddingModel] = useState<string>('gemini-embedding-2-preview');
+  const [modelLoadingInfo, setModelLoadingInfo] = useState<{file: string, progress: number, status: string} | null>(null);
   const cancelRef = useRef(false);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -90,17 +91,22 @@ export default function IngestionModule() {
                 const response = await withExponentialBackoff(
                   () => ai.models.embedContent({
                    model: 'gemini-embedding-2-preview', 
-                   contents: textChunk,
+                   contents: [{ parts: [{ text: textChunk }] }],
                   }),
                   4,
                   addLog,
                   cancelRef
                 );
-                embedding = response.embeddings?.[0]?.values || [];
+                embedding = response.embedding?.values || response.embeddings?.[0]?.values || [];
               } else {
                 embedding = await generateLocalEmbedding(textChunk, embeddingModel, (info: any) => {
-                  if (info.status === 'init') addLog(`Inicializando modelo local: ${embeddingModel}`);
-                  else if (info.status === 'download') addLog(`Descargando ${info.file}...`);
+                  if (info.status === 'initiate') {
+                    setModelLoadingInfo({ file: info.file, progress: 0, status: 'Iniciando...' });
+                  } else if (info.status === 'progress') {
+                    setModelLoadingInfo({ file: info.file, progress: info.progress, status: 'Descargando' });
+                  } else if (info.status === 'done') {
+                    setModelLoadingInfo(null);
+                  }
                 });
               }
               
@@ -128,13 +134,13 @@ export default function IngestionModule() {
                const response = await withExponentialBackoff(
                  () => ai.models.embedContent({
                    model: 'gemini-embedding-2-preview',
-                   contents: `[${parsed.type.toUpperCase()} FILE] ${file.name}`,
+                   contents: [{ parts: [{ text: `[${parsed.type.toUpperCase()} FILE] ${file.name}` }] }],
                  }),
                  4,
                  addLog,
                  cancelRef
                );
-               embedding = response.embeddings?.[0]?.values || [];
+               embedding = response.embedding?.values || response.embeddings?.[0]?.values || [];
              } else {
                embedding = await generateLocalEmbedding(`[${parsed.type.toUpperCase()} FILE] ${file.name}`, embeddingModel);
              }
@@ -219,6 +225,22 @@ export default function IngestionModule() {
                  <option value="Xenova/all-MiniLM-L6-v2">Local: Xenova/all-MiniLM-L6-v2 (Rápido, ~22MB)</option>
                  <option value="onnx-community/embeddinggemma-300m-ONNX">Local: Gemma 300M ONNX (+Pesado, ~600MB)</option>
                </select>
+
+               {modelLoadingInfo && (
+                 <div className="mb-6 p-3 bg-blue-50 rounded-lg border border-blue-100 animate-in fade-in zoom-in duration-300">
+                    <div className="flex justify-between items-center mb-2">
+                       <span className="text-[10px] font-bold text-blue-600 uppercase tracking-tighter">{modelLoadingInfo.status}</span>
+                       <span className="text-[10px] font-mono text-blue-400">{Math.round(modelLoadingInfo.progress)}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-blue-200 rounded-full overflow-hidden">
+                       <div 
+                         className="h-full bg-blue-600 transition-all duration-300 ease-out" 
+                         style={{ width: `${modelLoadingInfo.progress}%` }}
+                       />
+                    </div>
+                    <p className="text-[9px] text-blue-400 mt-2 truncate font-mono">Archivo: {modelLoadingInfo.file}</p>
+                 </div>
+               )}
 
                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Estrategia de Fragmentación (Chunking)</h4>
                <div className="grid grid-cols-2 gap-4">

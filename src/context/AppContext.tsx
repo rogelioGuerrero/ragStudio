@@ -7,6 +7,7 @@ export interface QueryMetric {
   retrievedCount: number;
   averageSimilarity: number;
   llmResponseTimeMs?: number;
+  retrievedIds?: string[];
 }
 
 interface AppState {
